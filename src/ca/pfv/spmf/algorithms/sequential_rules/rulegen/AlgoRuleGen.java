@@ -16,6 +16,8 @@ package ca.pfv.spmf.algorithms.sequential_rules.rulegen;
 * SPMF. If not, see <http://www.gnu.org/licenses/>.
 */
 
+import ca.pfv.spmf.algorithms.sequential_rules.OrderedSequentialRule;
+import ca.pfv.spmf.algorithms.sequential_rules.OrderedSequentialRuleMiner;
 import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
@@ -25,13 +27,15 @@ import ca.pfv.spmf.algorithms.sequentialpatterns.BIDE_and_prefixspan.SequentialP
 import ca.pfv.spmf.algorithms.sequentialpatterns.BIDE_and_prefixspan.SequentialPatterns;
 import ca.pfv.spmf.input.sequence_database_list_integers.SequenceDatabase;
 import ca.pfv.spmf.tools.MemoryLogger;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * This is an implementation of the RuleGen algorithm proposed by Zaki et al to generate sequential rules where
  * the antecedent and consequent are sequential patterns.  The RuleGen algorithm is described in: 
  * <br/><br/>
  * 
- *    M. J. Zaki, “SPADE: An Efficient Algorithm for Mining Frequent Se-quences,”Machine Learning, vol. 42, no.1-2, pp. 31-60, 2001.
+ *    M. J. Zaki, ï¿½SPADE: An Efficient Algorithm for Mining Frequent Se-quences,ï¿½Machine Learning, vol. 42, no.1-2, pp. 31-60, 2001.
  * <br/><br/>
  * 
  * However, note that instead of using the SPADE algorithm,  we use the PrefixSpan algorithm because at the time
@@ -43,7 +47,7 @@ import ca.pfv.spmf.tools.MemoryLogger;
  * @see SequentialPatterns
  * @author Philippe Fournier-Viger
  */
-public class AlgoRuleGen {
+public class AlgoRuleGen implements OrderedSequentialRuleMiner {
 	
 	// start time of the latest execution
 	private long startTime; 
@@ -61,6 +65,58 @@ public class AlgoRuleGen {
 	 */
 	public AlgoRuleGen() {
 	}
+
+        @Override
+        public List<OrderedSequentialRule> runAlgorithm(double minSupport, double minConfidence, SequenceDatabase input) {
+		writer = null;
+		// record the start time
+		startTime = System.currentTimeMillis();
+				
+                final List<OrderedSequentialRule> rules = new ArrayList<>();
+                    
+		// STEP 1: Apply the PrefixSpan algorithm to generate frequent sequential patterns
+		final AlgoPrefixSpan algo = new AlgoPrefixSpan(); 
+                try {
+                    final SequentialPatterns patternsLists = algo.runAlgorithm(input, minSupport, null); 
+
+
+                    // STEP 2: Generate  rules of the form    a ==> b, 
+                    // where a and b are sequential patterns 
+                    // such that a is a subsequence of b.
+                    // For each rule
+
+                    // for each seq. pattern a (pattern1)  of size i
+                    for (int i = 0; i < patternsLists.getLevels().size(); i++) {
+                            for(int j=0; j < patternsLists.getLevel(i).size(); j++){
+                                    SequentialPattern pattern1 = patternsLists.getLevel(i).get(j);
+
+                                    //for each seq. pattern  b (pattern2) of SIZE k > i
+                                    for (int k = i+1; k < patternsLists.getLevels().size(); k++) {
+                                            for(int m =0; m < patternsLists.getLevel(k).size(); m++){
+                                                    SequentialPattern pattern2 = patternsLists.getLevel(k).get(m);
+
+                                                    // try to generate a rule   a ==> b
+                                                    final OrderedSequentialRule ruleAB = tryToGenerateRule(pattern1, pattern2, minConfidence, input.size());
+                                                    if (ruleAB != null)
+                                                        rules.add(ruleAB);
+                                                    // try to generate a rule   b ==> a
+                                                    final OrderedSequentialRule ruleBA = tryToGenerateRule(pattern2, pattern1, minConfidence, input.size());
+                                                    if (ruleBA != null)
+                                                        rules.add(ruleBA);
+                                            }
+                                    }
+                            }
+                    }
+                    // check the memory usage
+                    MemoryLogger.getInstance().checkMemory();
+                    // record the end time
+                    endTime = System.currentTimeMillis(); 
+                }
+                catch(final IOException e) {
+                    System.err.println(e);
+                }
+                return rules;
+        }
 	
 	/**
 	 * Run the algorithm
@@ -68,9 +124,10 @@ public class AlgoRuleGen {
 	 * @param minconf the minimum confidence threshold
 	 * @param input   the input file path
 	 * @param output  the output file path for saving the result
+         * @return A list of rules.
 	 * @throws IOException exception if there is an error reading/writing files
 	 */
-	public void runAlgorithm(int minsup, double minconf, String input, String output) throws IOException {
+	public List<OrderedSequentialRule> runAlgorithm(int minsup, double minconf, String input, String output) throws IOException {
 		// Prepare object for writing the output file
 		writer = new BufferedWriter(new FileWriter(output)); 
 		// record the start time
@@ -84,6 +141,8 @@ public class AlgoRuleGen {
 		AlgoPrefixSpan algo = new AlgoPrefixSpan(); 
 		SequentialPatterns patternsLists = algo.runAlgorithm(sequenceDatabase, null, minsup);    
 
+                final List<OrderedSequentialRule> rules = new ArrayList<>();
+                
 		// STEP 2: Generate  rules of the form    a ==> b, 
 		// where a and b are sequential patterns 
 		// such that a is a subsequence of b.
@@ -100,9 +159,13 @@ public class AlgoRuleGen {
 						SequentialPattern pattern2 = patternsLists.getLevel(k).get(m);
 						
 						// try to generate a rule   a ==> b
-						tryToGenerateRule(pattern1, pattern2, minconf);
+						final OrderedSequentialRule ruleAB = tryToGenerateRule(pattern1, pattern2, minconf, sequenceDatabase.size());
+                                                if (ruleAB != null)
+                                                    rules.add(ruleAB);
 						// try to generate a rule   b ==> a
-						tryToGenerateRule(pattern2, pattern1, minconf);
+						final OrderedSequentialRule ruleBA = tryToGenerateRule(pattern2, pattern1, minconf, sequenceDatabase.size());
+                                                if (ruleBA != null)
+                                                    rules.add(ruleBA);
 					}
 				}
 			}
@@ -113,6 +176,7 @@ public class AlgoRuleGen {
 		endTime = System.currentTimeMillis();
 		// close the output file
 		writer.close();	
+                return rules;
 	}
 	
 	
@@ -124,18 +188,18 @@ public class AlgoRuleGen {
 	 * @param pattern2 another sequential pattern
 	 * @throws IOException 
 	 */
-	private void tryToGenerateRule(SequentialPattern pattern1, SequentialPattern pattern2, double minconf) throws IOException {
+	private OrderedSequentialRule tryToGenerateRule(SequentialPattern pattern1, SequentialPattern pattern2, double minconf, final int numSequences) throws IOException {
 		// if pattern1 is not contained in pattern2, we stop
 		// because we want that pattern1 is strictly included in pattern2
 		if(strictlyContains(pattern2, pattern1) == false){
-			return;
+			return null;
 		}
 		// calculate the confidence of:     pattern1 ==>  pattern2  / pattern1
 		double conf = ((double) pattern2.getAbsoluteSupport()) / pattern1.getAbsoluteSupport();
 		
 		// if not enough confidence, then the rule is not valid
 		if(conf < minconf){
-			return;
+			return null;
 		}
 		
 		// otherwise it is a valid rule so
@@ -143,24 +207,28 @@ public class AlgoRuleGen {
 		patternCount++;
 		// then save it to file.
 		
-		// Create a string buffer
-		StringBuilder buffer = new StringBuilder();
-//		
-		// write the rule
-		buffer.append(pattern1.itemsetsToString());
-		buffer.append(" ==> ");
-		buffer.append(pattern2.itemsetsToString());
-//
-		// write support
-		buffer.append(" #SUP: ");
-		buffer.append(pattern2.getAbsoluteSupport());
-		
-		// write confidence
-		buffer.append(" #CONF: ");
-		buffer.append(conf);
-		
-		writer.write(buffer.toString());  // write to file 
-		writer.newLine(); // write a new line
+                if (writer != null) {
+                    // Create a string buffer
+                    StringBuilder buffer = new StringBuilder();
+    //		
+                    // write the rule
+                    buffer.append(pattern1.itemsetsToString());
+                    buffer.append(" ==> ");
+                    buffer.append(pattern2.itemsetsToString());
+    //
+                    // write support
+                    buffer.append(" #SUP: ");
+                    buffer.append(pattern2.getAbsoluteSupport());
+
+                    // write confidence
+                    buffer.append(" #CONF: ");
+                    buffer.append(conf);
+
+                    writer.write(buffer.toString());  // write to file 
+                    writer.newLine(); // write a new line
+                }
+                
+                return new OrderedSequentialRule(pattern1, pattern2, (double) pattern2.getAbsoluteSupport()/numSequences, conf);
 		
 	}
 	
